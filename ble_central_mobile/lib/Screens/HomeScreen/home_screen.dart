@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:ble_central_mobile/Screens/HomeScreen/image_item.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 final Uuid kPeripheralServiceUuid =
     Uuid.parse("0000181C00001000800000805F9B34FB");
@@ -68,6 +69,22 @@ class _HomeScreenState extends State<HomeScreen> {
     StreamSubscription<List<int>>? notificationSub;
     List<int>? latestNotification;
     bool connected = false;
+
+    // Check permissions
+    Map<Permission, PermissionStatus> permissionStatus = {
+      Permission.bluetooth: await Permission.bluetooth.status,
+      Permission.bluetoothConnect: await Permission.bluetoothConnect.status,
+      Permission.bluetoothScan: await Permission.bluetoothScan.status,
+    };
+
+    // Request permissions as long as they are denied
+    while (permissionStatus.values.any((status) => status.isDenied)) {
+      permissionStatus = await [
+        Permission.bluetooth,
+        Permission.bluetoothConnect,
+        Permission.bluetoothScan,
+      ].request();
+    }
 
     while (true) {
       // Clear GATT cache
