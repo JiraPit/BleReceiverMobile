@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:ble_central_mobile/Screens/HomeScreen/image_item.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 
@@ -41,15 +42,17 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: SingleChildScrollView(
-          child: Center(
-            child: Column(
-              children: _imageData
-                  .map(
-                    (data) => ImageItem(imageData: data),
-                  )
-                  .toList(),
+        child: Expanded(
+          child: GridView.builder(
+            scrollDirection: Axis.vertical,
+            itemCount: _imageData.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              childAspectRatio: 1,
             ),
+            itemBuilder: (context, index) {
+              return ImageItem(imageData: _imageData[index]);
+            },
           ),
         ),
       ),
@@ -193,31 +196,5 @@ class _HomeScreenState extends State<HomeScreen> {
       // Wait for 3 seconds before trying to connect again
       await Future.delayed(const Duration(seconds: 3));
     }
-  }
-}
-
-class ImageItem extends StatelessWidget {
-  const ImageItem({
-    super.key,
-    required Uint8List? imageData,
-  }) : _imageData = imageData;
-
-  final Uint8List? _imageData;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 200,
-      width: 200,
-      decoration: BoxDecoration(
-        image: _imageData != null
-            ? DecorationImage(
-                image: MemoryImage(_imageData),
-                fit: BoxFit.cover,
-              )
-            : null,
-        color: Colors.grey,
-      ),
-    );
   }
 }
