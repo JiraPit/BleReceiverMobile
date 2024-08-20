@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
-
 import 'package:ble_central_mobile/Screens/HomeScreen/image_item.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
@@ -21,14 +20,14 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final List<Uint8List?> _imageData = [];
-  StreamSubscription<Uint8List?>? _imageDataSubscription;
+  StreamSubscription<List<int>>? _imageDataSubscription;
 
   @override
   void initState() {
     super.initState();
     _imageDataSubscription = listenToPeripheral().listen((data) {
       setState(() {
-        _imageData.add(data);
+        _imageData.add(Uint8List.fromList(data));
       });
     });
   }
@@ -43,47 +42,47 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: Expanded(
-          child: GridView.builder(
-            scrollDirection: Axis.vertical,
-            itemCount: _imageData.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
-              childAspectRatio: 1,
-            ),
-            itemBuilder: (context, index) {
-              return ImageItem(imageData: _imageData[index]);
-            },
+        child: GridView.builder(
+          scrollDirection: Axis.vertical,
+          itemCount: _imageData.length,
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+            childAspectRatio: 1,
           ),
+          itemBuilder: (context, index) {
+            return ImageItem(imageData: _imageData[index]);
+          },
         ),
       ),
     );
   }
 
   /// Listen for device events through BLE and yield the results
-  static Stream<Uint8List?> listenToPeripheral() async* {
+  static Stream<List<int>> listenToPeripheral() async* {
     FlutterReactiveBle ble = FlutterReactiveBle();
     ble.logLevel = LogLevel.verbose;
     DiscoveredDevice? bleDevice;
     StreamSubscription<ConnectionStateUpdate>? connectionStateSub;
     StreamSubscription<List<int>>? notificationSub;
-    List<int>? latestNotification;
+    List<List<int>> receivedPackets = [];
+    int? messageLength;
+    List<int> messageBuffer = [];
     bool connected = false;
 
     // Check permissions
-    Map<Permission, PermissionStatus> permissionStatus = {
-      Permission.bluetooth: await Permission.bluetooth.status,
-      Permission.bluetoothConnect: await Permission.bluetoothConnect.status,
-      Permission.bluetoothScan: await Permission.bluetoothScan.status,
-    };
+    Map<Permission, PermissionStatus> permissionStatus = {};
 
     // Request permissions as long as they are denied
-    while (permissionStatus.values.any((status) => status.isDenied)) {
+    while (true) {
       permissionStatus = await [
-        Permission.bluetooth,
-        Permission.bluetoothConnect,
         Permission.bluetoothScan,
+        Permission.bluetoothConnect,
       ].request();
+      if (permissionStatus.values.every((element) => element.isGranted)) {
+        break;
+      }
     }
 
     while (true) {
@@ -98,11 +97,11 @@ class _HomeScreenState extends State<HomeScreen> {
           withServices: [kPeripheralServiceUuid],
           scanMode: ScanMode.lowLatency,
         )) {
-          if (discovered.name == "pop-os") {
-            debugPrint("Device found - ${discovered.name}");
-            bleDevice = discovered;
-            break;
-          }
+          //if (discovered.name == "pop-os") {
+          //  debugPrint("Device found - ${discovered.name}");
+          bleDevice = discovered;
+          break;
+          //}
         }
       } catch (e) {
         // If scan fails, try again
@@ -159,13 +158,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
           // Subscribe to the characteristic for notifications
           notificationSub =
-              ble.subscribeToCharacteristic(characteristic).listen((event) {
-            latestNotification = event;
-            debugPrint("Received notification: $latestNotification");
+              ble.subscribeToCharacteristic(characteristic).listen((packet) {
+            receivedPackets.add(packet);
+            debugPrint("Received notification of length ${packet.length}");
           });
 
           // Send device id and wait for confirmation
-          await ble.writeCharacteristicWithoutResponse(
+          await ble.writeCharacteristicWithResponse(
             characteristic,
             value: utf8.encode("Ready"),
           );
@@ -174,16 +173,33 @@ class _HomeScreenState extends State<HomeScreen> {
           while (true) {
             // Wait for the device to respond with the device id
             while (connected) {
-              if (latestNotification != null) {
-                yield Uint8List.fromList(latestNotification!);
-                // Send device id and wait for confirmation
-                await ble.writeCharacteristicWithoutResponse(
-                  characteristic,
-                  value: utf8.encode("Ready"),
-                );
-                latestNotification = null;
+              if (receivedPackets.isNotEmpty) {
+                List<int> packet = receivedPackets.removeAt(0);
+                if (messageLength == null) {
+                  messageLength = int.tryParse(utf8.decode(packet));
+                } else {
+                  // Append the latest packet to the message buffer
+                  messageBuffer.addAll(packet);
+
+                  if (messageBuffer.length >= messageLength) {
+                    // Yield the image data
+                    yield messageBuffer;
+
+                    // Clear the message buffer and reset the message length
+                    messageLength = null;
+                    messageBuffer.clear();
+
+                    // Send device id and wait for confirmation
+                    await ble.writeCharacteristicWithResponse(
+                      characteristic,
+                      value: utf8.encode("Ready"),
+                    );
+                  }
+                }
+              } else {
+                // Wait for 50ms before checking again
+                await Future.delayed(const Duration(milliseconds: 50));
               }
-              await Future.delayed(const Duration(milliseconds: 100));
             }
             if (!connected) {
               continue;
@@ -207,7 +223,6 @@ class _HomeScreenState extends State<HomeScreen> {
       connectionStateSub = null;
       notificationSub?.cancel();
       notificationSub = null;
-      latestNotification = null;
       ble.deinitialize();
 
       // Wait for 3 seconds before trying to connect again
